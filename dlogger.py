@@ -25,12 +25,12 @@ class DLogger:
         ch.setFormatter(formatter)
 
         # 将 RankFilter 添加到处理器
-        rank_filter = RankFilter(lrank)
+        rank_filter = RankFilter(str(lrank))
         ch.addFilter(rank_filter)
 
         self.logger.addHandler(ch)
         self.is_master = False
-        if lrank == '0' or lrank == 'gpu':
+        if lrank == 0:
             self.is_master = True
     def pstr(self, *args):
         msg = ' '.join(str(arg) for arg in args)

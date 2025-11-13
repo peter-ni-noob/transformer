@@ -4,7 +4,16 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from typing import Any, Callable, List, Optional, Tuple
+from dutil import divide
 from hpConfig import ModelParallelConfig
+import gobalVar
+
+
+
+from torch.nn.parameter import Parameter
+
+
+
 
 class ColumnParallelLinear(torch.nn.Module):
     """Linear layer with column parallelism.
@@ -37,8 +46,8 @@ class ColumnParallelLinear(torch.nn.Module):
         self.skip_bias_add = skip_bias_add
         self.config = config
 
-        world_size = get_pg_size(self.tp_group)
-        rank = get_pg_rank(self.tp_group)
+        world_size = gobalVar.TPWORLD_SIZE
+        rank = gobalVar.TPRANK
 
         self.output_size_per_partition = divide(output_size, world_size)
 

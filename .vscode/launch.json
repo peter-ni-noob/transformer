@@ -36,8 +36,9 @@
             "env": {"CUDA_DEVICE_MAX_CONNECTIONS":"1",
             "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION":"python",
             "CUDA_HOME":"/usr/local/cuda",
-            "CUDA_VISIBLE_DEVICES":"3,4",
-            "PYTHONPATH":"${workspaceFolder}"        
+            "CUDA_VISIBLE_DEVICES":"2,3,4",
+            "PYTHONPATH":"${workspaceFolder}",
+            "GPUS_NUM":"1" //与--nproc_per_node保持一致        
             }
         },{
             "name": "torchrun调试megatron算子",

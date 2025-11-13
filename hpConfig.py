@@ -6,7 +6,7 @@ class TransformerConfig:
     n_embd:int=768
     hidden_dropout:float=0.0
     attention_dropout:float=0.0
-    batch_size:int=8
+    batch_size:int=1
     seq_len:int=1024
     nlayer:int=3
     vocab_size:int=50257

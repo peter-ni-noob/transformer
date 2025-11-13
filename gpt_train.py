@@ -30,16 +30,18 @@ from transformerLayer import Transformer
 from hpConfig import TransformerConfig, TransformerOptimizerConfig
 
 from dlogger import DLogger
-from dutil import get_lrank
+from dutil import get_lrank, get_rank
 
 
 def device_init():
     dist_init=int(os.environ.get('RANK', -1)) != -1
-    rank=int(os.environ.get('RANK',0))
+    # rank=int(os.environ.get('RANK',0))
     if dist_init:
         init_process_group(backend='nccl')
-        local_num=torch.cuda.device_count()
-        local_rank = rank%local_num
+        # 分布式启动device_count无法正确获取VISIBLE_DEVICES数量
+        # local_num=torch.cuda.device_count()
+        # local_num=int(os.environ.get('GPUS_NUM', 0))
+        local_rank = int(os.environ['LOCAL_RANK'])
         torch.cuda.set_device(local_rank)
         device = torch.device("cuda", local_rank)
     else:
@@ -63,12 +65,9 @@ def init_tp_env():
         world_size=dist.get_world_size()
     set_global_var("TPWORLD_SIZE",world_size)
     lrank=get_lrank()
-    if lrank=="gpu":
-        lrank=0
-    else:
-        lrank=int(lrank)
-    set_global_var("TPRANK",lrank)
-    
+    set_global_var("TPLOCAL_RANK",lrank)
+    rank=get_rank()
+    set_global_var("TPRANK",rank)
 
 def main():
     # args=parse_args()
