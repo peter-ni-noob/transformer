@@ -13,6 +13,13 @@ class TransformerConfig:
     n_head:int=12
     accumulation_steps:int=1
     log_interval:int=10
+    init_method_std:float=0.02
+
+    group_query_attention:bool=False
+    sequence_parallel:bool=False
+    apply_query_key_layer_scaling:bool=False
+    num_query_groups:int=1
+
  
 @dataclass
 class TransformerOptimizerConfig:
@@ -22,3 +29,4 @@ class TransformerOptimizerConfig:
 @dataclass
 class ModelParallelConfig:
     tensor_model_parallel_size: int = 1
+    perform_initialization: bool = True

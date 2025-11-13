@@ -31,7 +31,7 @@
                 "--nnodes", "1",
                 "--master_addr", "localhost",
                 "--master_port", "6000",
-                "${workspaceFolder}/gpt_train.py"
+                "${file}"
             ],
             "env": {"CUDA_DEVICE_MAX_CONNECTIONS":"1",
             "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION":"python",
