@@ -4,10 +4,11 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from typing import Any, Callable, List, Optional, Tuple
-from dutil import device_init, divide, init_tp_env
+from dutil import device_init, divide, get_global_memory_buffer, init_tp_env
 from hpConfig import TransformerConfig
 import gobalVar
 from enum import Enum
+import math
 
 
 from torch.nn.parameter import Parameter
@@ -140,7 +141,7 @@ class RowParallelLinear(torch.nn.Module):
                     torch.empty(
                         self.output_size,
                         device=torch.cuda.current_device(),
-                        dtype=config.params_dtype,
+                        dtype=torch.float32,
                     )
             )
            with torch.no_grad():
@@ -195,7 +196,7 @@ def test_ColumnParallelLinear():
 
 class ParallelAttention(nn.Module):
     """
-    Take in model size and number of heads.
+    Megatron ParallelAttention
     """
     def __init__(self,config:TransformerConfig,
         embed_dim,
@@ -207,12 +208,14 @@ class ParallelAttention(nn.Module):
         bias: bool = True,
         batch_first: bool =False):
         super(ParallelAttention,self).__init__()
+        self.batch_first=batch_first
         self.layer_number=max(1,layer_number)
         self.config=config
         kv_channels=embed_dim/num_heads
         query_projection_size = kv_channels * num_heads
         num_attention_head = num_heads
         hidden_size = embed_dim
+        self.hidden_size=hidden_size
         if self.config.group_query_attention:
             kv_projection_size = kv_channels * self.config.num_query_groups
         else:
@@ -242,20 +245,165 @@ class ParallelAttention(nn.Module):
         assert embed_dim % num_heads==0,"embed_dim must be divisible by num_heads"
 
         if attention_type == AttnType.self_attn:
-           self.mixed_x_layer=ColumnParallelLinear(config,hidden_size, query_projection_size + 2 * kv_projection_size,bias,False)
+           self.mixed_x_layer=ColumnParallelLinear(config,hidden_size, int(query_projection_size + 2 * kv_projection_size),bias,False)
         else:
             assert False,"not implemented!"
         
-        self.outmha=RowParallelLinear(config,query_projection_size,hidden_size,bias,True)
-        self.register_buffer("attention_mask",nn.Transformer.generate_square_subsequent_mask(config.seq_len))
+        self.outmha=RowParallelLinear(config,int(query_projection_size),hidden_size,bias,True)
+        if attention_mask:
+            self.register_buffer("attention_mask",nn.Transformer.generate_square_subsequent_mask(config.seq_len,dtype=torch.float32))
+        else:
+            self.register_buffer("attention_mask",None)
 
-    def forward(self,hidden_states):
+        self.num_query_groups_per_partition=int(num_query_groups_per_partition)
+        self.num_attention_heads_per_partition=int(num_attention_heads_per_partition)
+        self.hidden_size_per_attention_head=int(hidden_size_per_attention_head)
+        self.projection_size = int(kv_channels * num_attention_head)
+        self.hidden_size_per_partition = divide(self.projection_size, world_size)
+        norm_factor=math.sqrt(self.hidden_size_per_attention_head)
+        coeff=-1
+        if config.apply_query_key_layer_scaling:
+            coeff=layer_number
+            norm_factor*=layer_number
+        self.norm_factor=torch.tensor(coeff,dtype=torch.float32)
+        self.coeff=torch.tensor(coeff,dtype=torch.float32)
+
+
+
+
+    def forward(self,hidden_states:torch.Tensor):
+        is_batched= hidden_states.ndim ==3
+        if is_batched and self.batch_first:
+            assert False,"not impl"
+
+
+        mixed_x_layer=self.mixed_x_layer(hidden_states)
+
+        new_tensor_shape = mixed_x_layer.size()[:-1] + (
+                self.num_query_groups_per_partition,
+                (
+                    (self.num_attention_heads_per_partition // self.num_query_groups_per_partition + 2)
+                    * self.hidden_size_per_attention_head
+                ),
+            )
+        mixed_x_layer = mixed_x_layer.view(*new_tensor_shape)
+        # [sq, b, ng, (np/ng + 2) * hn] --> [sq, b, ng, np/ng * hn], [sq, b, ng, hn], [sq, b, ng, hn]
+        (query_layer,
+            key_layer,
+            value_layer) = torch.split(
+                mixed_x_layer,
+                [
+                    (
+                        self.num_attention_heads_per_partition // self.num_query_groups_per_partition
+                        * self.hidden_size_per_attention_head
+                    ),
+                    self.hidden_size_per_attention_head,
+                    self.hidden_size_per_attention_head
+                ],
+                dim=3)
+         # [sq, b, ng, np/ng * hn] -> [sq, b, np, hn] -
+        query_layer = query_layer.view(query_layer.size(0), query_layer.size(1), -1, self.hidden_size_per_attention_head)
+
+        if self.num_attention_heads_per_partition // self.num_query_groups_per_partition > 1:
+            key_layer = key_layer.repeat_interleave(
+                self.num_attention_heads_per_partition // self.num_query_groups_per_partition,
+                dim = 2
+            )
+            value_layer = value_layer.repeat_interleave(
+                self.num_attention_heads_per_partition // self.num_query_groups_per_partition,
+                dim = 2
+            )
+
+        #core attenion
+        apply_query_key_layer_scaling=self.config.apply_query_key_layer_scaling
+        sequence_parallel=self.config.sequence_parallel
+
+        # [b, np, sq, sk]
+        output_size = (query_layer.size(1),
+                       query_layer.size(2),
+                       query_layer.size(0),
+                       key_layer.size(0))
+
+        # [sq, b, np, hn] -> [sq, b * np, hn]
+        query_layer = query_layer.reshape(output_size[2],
+                                          output_size[0] * output_size[1], -1)
+        # [sk, b, np, hn] -> [sk, b * np, hn]
+        key_layer = key_layer.view(output_size[3],
+                                   output_size[0] * output_size[1], -1)
+        
+        # preallocting input tensor: [b * np, sq, sk]
+        matmul_input_buffer = get_global_memory_buffer().get_tensor(
+            (output_size[0]*output_size[1], output_size[2], output_size[3]),
+            query_layer.dtype, "mpu")
+        
+        # Raw attention scores. [b * np, sq, sk]
+        matmul_result = torch.baddbmm(
+            matmul_input_buffer,
+            query_layer.transpose(0, 1),   # [b * np, sq, hn]
+            key_layer.transpose(0, 1).transpose(1, 2),  # [b * np, hn, sk]
+            beta=0.0, alpha=(1.0/self.norm_factor))
+        
+        if self.coeff!= -1:
+            matmul_result = matmul_result * self.coeff
+        
+        if self.attention_mask is not None:
+            attn_mask = self.attention_mask
+
+            # [sq, sk] -> [1, sq, sk]
+            attn_mask = attn_mask.unsqueeze(0)
+            matmul_result = matmul_result + attn_mask
+
+        attention_probs = F.softmax(matmul_result, dim=-1)
+        output_size = (value_layer.size(1),
+                       value_layer.size(2),
+                       query_layer.size(0),
+                       value_layer.size(3))
+        value_layer = value_layer.view(value_layer.size(0),
+                                       output_size[0] * output_size[1], -1)
+        
+         # matmul: [b * np, sq, hn]
+        context_layer = torch.bmm(attention_probs, value_layer.transpose(0, 1))
+        # change view [b, np, sq, hn]
+        context_layer = context_layer.view(*output_size)
+
+        # [b, np, sq, hn] --> [sq, b, np, hn]
+        context_layer = context_layer.permute(2, 0, 1, 3).contiguous()
+
+        # [sq, b, np, hn] --> [sq, b, hp]
+        new_context_layer_shape = context_layer.size()[:-2] + \
+            (self.hidden_size_per_partition,)
+        context_layer = context_layer.view(*new_context_layer_shape)
+        out=self.outmha(context_layer)
+        return out
+
+
+        
+
+def test_PMHA():
+    import atexit
+
+    atexit.register(torch.distributed.destroy_process_group)
+
+    device=device_init()
+    init_tp_env()
+
+    config=TransformerConfig()
+
+    layer = ParallelAttention(config,embed_dim=768, num_heads=12,attention_type=AttnType.self_attn,layer_number=1,attention_mask=True,dropout=0.0,bias=True,batch_first=False).to(device)
+    input_tensor = torch.randn(1024,2, 768,requires_grad=True,device=device)  # 批次大小为2，输入特征大小为4
+    output = layer(input_tensor)
+    output.mean().backward()
+    print("Output shape:", output.shape)  # 输出形状应为 [2, 4] (8/2)
+    print("layer_grad",layer.mixed_x_layer.weight.grad )
+    print("layer_grad",layer.outmha.weight.grad )
+    print("input_tensor.",input_tensor.grad ) 
         
         
 
 
 
 
+        
 
 
 
@@ -264,6 +412,9 @@ class ParallelAttention(nn.Module):
 
 
 
-if __name__ == "__main__":    # 测试ColumnParallelLinear
-    pass
- 
+
+
+
+
+if __name__ == "__main__":    # 测试
+    test_PMHA()
