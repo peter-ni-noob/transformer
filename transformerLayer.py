@@ -12,7 +12,7 @@ class CrossEntropy(nn.Module):
         super().__init__()
 
     def forward(self,logits,label):
-        return F.cross_entropy(logits.view(-1,logits.size(-1)),label.view(-1))
+        return F.cross_entropy(logits.reshape(-1,logits.size(-1)),label.reshape(-1))
     
 
 class MLP(nn.Module):

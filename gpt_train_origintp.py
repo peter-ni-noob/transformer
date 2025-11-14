@@ -41,7 +41,9 @@ from dutil import device_init, init_tp_env
 #     args = parser.parse_args()
 #     return args
 
+import atexit
 
+atexit.register(torch.distributed.destroy_process_group)
 
 
 def main():

@@ -1,7 +1,7 @@
 #!/bin/bash
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
-# export CUDA_VISIBLE_DEVICES=2,3,4
+export CUDA_VISIBLE_DEVICES=2,3,4
 
 GPUS_PER_NODE=2
 # Change for multinode config
