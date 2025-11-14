@@ -591,16 +591,10 @@ class WPParallelAttention(nn.Module):
             norm_factor*=layer_number
         self.norm_factor=torch.tensor(coeff,dtype=torch.float32)
         self.coeff=torch.tensor(coeff,dtype=torch.float32)
+        self.rank=gobalVar.TPRANK
 
 
-
-
-    def forward(self,hidden_states:torch.Tensor):
-        is_batched= hidden_states.ndim ==3
-        if is_batched and self.batch_first:
-            assert False,"not impl"
-
-
+    def core_attenion(self,hidden_states:torch.Tensor):
         mixed_x_layer=self.mixed_x_layer(hidden_states)
 
         new_tensor_shape = mixed_x_layer.size()[:-1] + (
@@ -699,7 +693,58 @@ class WPParallelAttention(nn.Module):
         context_layer = context_layer.view(*new_context_layer_shape)
         out,bias=self.outmha(context_layer)
         return out,bias
-        
+
+    def forward(self,hidden_states:torch.Tensor):
+        is_batched= hidden_states.ndim ==3
+        if is_batched and self.batch_first:
+            assert False,"not impl"
+
+
+        with torch.no_grad():
+                with torch.cuda.stream(gobalVar.COMSTREAM):
+                    buffer=[]
+                    comworkers=[]
+                    for name,param in self.named_parameters():
+                        if name.find("ln")!=-1:
+                            continue
+                        for i in range(gobalVar.TPWORLD_SIZE):
+                            gpu_tensor=get_global_memory_buffer().try_get_tensor(param.shape,param.dtype,"rank-"+str(i)+"-"+"attention.attn."+name)
+                            buffer.append(gpu_tensor)
+                        comworkers.append(dist.all_gather(buffer,param,async_op=True))
+                        buffer.clear()
+        #异步拷贝
+        with torch.no_grad():
+            with torch.cuda.stream(gobalVar.COPYSTREAM):
+                x_copy=get_global_memory_buffer().get_tensor(hidden_states.shape,hidden_states.dtype,"x")
+                x_copy.copy_(hidden_states,non_blocking=True)
+
+        out,bias=self.core_attenion(hidden_states)
+
+        #等待通信完成,一般异步x拷贝完成
+        for i in range(4):
+            comworkers[i].wait()
+
+        for now in range(gobalVar.TPWORLD_SIZE):
+            if now==self.rank:
+                continue
+            for name,param in self.named_parameters():
+                if name.find("ln")!=-1:
+                    continue
+                gpu_tensor=get_global_memory_buffer().try_get_tensor(param.shape,param.dtype,"rank-"+str(now)+"-"+"attention.attn."+name)
+                param.data.copy_(gpu_tensor)
+            with torch.no_grad():
+                x1,bias1=self.core_attenion(x_copy)
+                out+=x1
+        for name,param in self.named_parameters():
+            if name.find("ln")!=-1:
+                continue
+            gpu_tensor=get_global_memory_buffer().try_get_tensor(param.shape,param.dtype,"rank-"+str(self.rank)+"-"+"attention.attn."+name)
+            with torch.cuda.stream(gobalVar.COPYSTREAM):
+                param.data.copy_(gpu_tensor,non_blocking=True)        
+        out=out+bias
+        gobalVar.COPYSTREAM.synchronize()        
+        return out
+    
 def test_PMHA():
     import atexit
 

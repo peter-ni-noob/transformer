@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from dataclasses import dataclass
 from hpConfig import TransformerConfig
 
-from tpLayer import ParallelAttention,ParallelMLP,WPParallelMLP
+from tpLayer import ParallelAttention,ParallelMLP, WPParallelAttention,WPParallelMLP
 from dutil import get_global_memory_buffer, set_global_var
 import gobalVar
 
@@ -167,6 +167,22 @@ class PAttention(nn.Module):
         x=self.dropout(x)
         return x
 
+class WPPAttention(nn.Module):
+    def __init__(self,config,layer_number:int):
+        super().__init__()
+        self.attn = WPParallelAttention(config,config.n_embd,config.n_head,layer_number=layer_number,attention_mask=config.need_attention_mask,dropout=config.attention_dropout,bias=True)
+        self.attn.name="attn"
+        self.attn.opname="mha"
+        self.dropout=nn.Dropout(config.hidden_dropout)
+        self.dropout.name="attn_dropout_post"
+        self.dropout.opname="dropout"
+        # self.register_buffer("attention_mask",nn.Transformer.generate_square_subsequent_mask(config.seq_len))
+
+    def forward(self,x):
+        x=self.attn(x)
+        # x=self.dropout(x)
+        return x
+
 
 class ParallelTransformerBlock(nn.Module):
     def __init__(self,config:TransformerConfig,layer_number:int):
@@ -269,7 +285,7 @@ class WPParallelTransformerBlock(nn.Module):
     def __init__(self,config:TransformerConfig,layer_number:int):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.n_embd)
-        self.attention=PAttention(config,layer_number)
+        self.attention=WPPAttention(config,layer_number)
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = WPParallelMLP(config)
         self.mlp.c_fc.name+="ffw"
@@ -281,7 +297,7 @@ class WPParallelTransformerBlock(nn.Module):
        
     def forward(self,x):
 
-        # x=x+self.attention(self.ln_1(x))
+        x=x+self.attention(self.ln_1(x))
         x=x+self.mlp(self.ln_2(x))
         return x
     
