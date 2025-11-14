@@ -5,8 +5,9 @@ from torch.nn import functional as F
 from dataclasses import dataclass
 from hpConfig import TransformerConfig
 
-from tpLayer import ParallelAttention,ParallelMLP
-
+from tpLayer import ParallelAttention,ParallelMLP,WPParallelMLP
+from dutil import get_global_memory_buffer, set_global_var
+import gobalVar
 
 
 class CrossEntropy(nn.Module):
@@ -270,7 +271,7 @@ class WPParallelTransformerBlock(nn.Module):
         self.ln_1 = nn.LayerNorm(config.n_embd)
         self.attention=PAttention(config,layer_number)
         self.ln_2 = nn.LayerNorm(config.n_embd)
-        self.mlp = ParallelMLP(config)
+        self.mlp = WPParallelMLP(config)
         self.mlp.c_fc.name+="ffw"
         self.mlp.c_proj.name+="ffw"
         self.ln_1.name="ln1"
@@ -279,7 +280,8 @@ class WPParallelTransformerBlock(nn.Module):
         self.ln_2.opname="layernorm"
        
     def forward(self,x):
-        x=x+self.attention(self.ln_1(x))
+
+        # x=x+self.attention(self.ln_1(x))
         x=x+self.mlp(self.ln_2(x))
         return x
     
@@ -290,7 +292,7 @@ class WPParallelTransformer(nn.Module):
         self.config=config
         h_list=[]
         for i in range(config.nlayer):
-            h_list.append(ParallelTransformerBlock(config,i))
+            h_list.append(WPParallelTransformerBlock(config,i))
             h_list[i].ln_1.name+=str(i)
             h_list[i].ln_2.name+=str(i)
             h_list[i].attention.dropout.name+=str(i)
@@ -320,6 +322,28 @@ class WPParallelTransformer(nn.Module):
         self.transformer.wpe.opname="embedding"
         self.register_buffer("pos_emb_x", torch.arange(0,self.config.seq_len,dtype=torch.long))
         self.apply(self._init_weights)
+
+        #get one block copy gpu memory buffer,one model cpu memory buffer
+
+        tpworldsize=gobalVar.TPWORLD_SIZE
+        tprank=gobalVar.TPRANK
+        for i in range(tpworldsize):       
+            for name,param in self.transformer.h[0].named_parameters():
+                if name.find("ln")!=-1:
+                    continue
+                get_global_memory_buffer().get_tensor(param.shape,param.dtype,"rank-"+str(i)+"-"+name)
+            # print(name)
+
+        if config.accumulation_steps!=1:
+            for i in range(tpworldsize):
+                for layer_num,layer in enumerate(self.transformer.h):
+                    for name,param in layer.named_parameters():
+                        if name.find("ln")!=-1:
+                            continue
+                        get_global_memory_buffer().get_CPUtensor(param.shape,param.dtype,"rank-"+str(i)+"-layer-"+str(layer_num)+"-"+name)
+
+
+        
 
     def _init_weights(self,module):
             std = self.config.init_method_std

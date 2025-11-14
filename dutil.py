@@ -70,6 +70,9 @@ def init_tp_env():
     rank=get_rank()
     set_global_var("TPRANK",rank)
     _set_global_memory_buffer()
+    set_global_var("COMSTREAM",torch.cuda.Stream())
+    set_global_var("COPYSTREAM",torch.cuda.Stream())
+
 
 
 
@@ -104,6 +107,16 @@ class GlobalMemoryBuffer:
 
         return self.buffer[(name, dtype)][0:required_len].view(*tensor_shape)
     
+    def try_get_tensor(self, tensor_shape, dtype, name, mem_alloc_context: Optional[Callable] = None):
+        required_len = reduce(operator.mul, tensor_shape, 1)
+        if (
+            self.buffer.get((name, dtype), None) is None
+            or self.buffer[(name, dtype)].numel() < required_len
+        ):
+            assert False, f"tensor {name} with shape {tensor_shape} not found in global buffer"
+        return self.buffer[(name, dtype)][0:required_len].view(*tensor_shape)
+
+    
     def get_CPUtensor(self, tensor_shape, dtype, name, mem_alloc_context: Optional[Callable] = None):
         """
         Returns (potentially) a sub-tensor from the self.cpu_buffer for the given shape.
@@ -122,6 +135,15 @@ class GlobalMemoryBuffer:
                     requires_grad=False,
                 )
 
+        return self.cpu_buffer[(name, dtype)][0:required_len].view(*tensor_shape)
+    
+    def try_get_CPUtensor(self, tensor_shape, dtype, name, mem_alloc_context: Optional[Callable] = None):
+        required_len = reduce(operator.mul, tensor_shape, 1)
+        if (
+            self.cpu_buffer.get((name, dtype), None) is None
+            or self.cpu_buffer[(name, dtype)].numel() < required_len
+        ):
+            assert False, f"CPU tensor {name} with shape {tensor_shape} not found in global buffer"
         return self.cpu_buffer[(name, dtype)][0:required_len].view(*tensor_shape)
     
 def _set_global_memory_buffer():

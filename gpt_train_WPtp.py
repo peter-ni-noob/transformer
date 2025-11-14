@@ -26,7 +26,7 @@ import gobalVar
 from gobalVar import set_global_var
 
 import argparse
-from transformerLayer import Transformer,ParallelTransformer
+from transformerLayer import Transformer,ParallelTransformer,WPParallelTransformer
 from hpConfig import TransformerConfig, TransformerOptimizerConfig
 
 from dlogger import DLogger
@@ -54,8 +54,11 @@ def main():
     dlogger=DLogger()
     # dlogger.info("device:",device,master_only=True)
     modelconfig=TransformerConfig()
-    model=ParallelTransformer(modelconfig).to(device)
+    model=WPParallelTransformer(modelconfig).to(device)
     model.train(True)
+    
+    # for name,param in model.named_parameters():
+    #     print(name)
 
 
     optim_config=TransformerOptimizerConfig()
