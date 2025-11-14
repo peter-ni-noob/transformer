@@ -82,6 +82,7 @@ class GlobalMemoryBuffer:
 
     def __init__(self):
         self.buffer = {}
+        self.cpu_buffer = {}
 
     def get_tensor(self, tensor_shape, dtype, name, mem_alloc_context: Optional[Callable] = None):
         """
@@ -102,6 +103,26 @@ class GlobalMemoryBuffer:
                 )
 
         return self.buffer[(name, dtype)][0:required_len].view(*tensor_shape)
+    
+    def get_CPUtensor(self, tensor_shape, dtype, name, mem_alloc_context: Optional[Callable] = None):
+        """
+        Returns (potentially) a sub-tensor from the self.cpu_buffer for the given shape.
+        """
+        required_len = reduce(operator.mul, tensor_shape, 1)
+        if (
+            self.cpu_buffer.get((name, dtype), None) is None
+            or self.cpu_buffer[(name, dtype)].numel() < required_len
+        ):
+            mem_alloc_context = mem_alloc_context if mem_alloc_context else nullcontext
+            with mem_alloc_context():
+                self.cpu_buffer[(name, dtype)] = torch.empty(
+                    required_len,
+                    dtype=dtype,
+                    device=torch.device('cpu'),
+                    requires_grad=False,
+                )
+
+        return self.cpu_buffer[(name, dtype)][0:required_len].view(*tensor_shape)
     
 def _set_global_memory_buffer():
     """Initialize global buffer."""
