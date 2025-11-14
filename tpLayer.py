@@ -378,7 +378,6 @@ class ParallelAttention(nn.Module):
 
 
         
-
 def test_PMHA():
     import atexit
 
@@ -390,7 +389,7 @@ def test_PMHA():
     config=TransformerConfig()
 
     layer = ParallelAttention(config,embed_dim=768, num_heads=12,attention_type=AttnType.self_attn,layer_number=1,attention_mask=True,dropout=0.0,bias=True,batch_first=False).to(device)
-    input_tensor = torch.randn(1024,2, 768,requires_grad=True,device=device)  # 批次大小为2，输入特征大小为4
+    input_tensor = torch.randn(config.seq_len,2, 768,requires_grad=True,device=device)  # 批次大小为2，输入特征大小为4
     output = layer(input_tensor)
     output.mean().backward()
     print("Output shape:", output.shape)  # 输出形状应为 [2, 4] (8/2)
@@ -399,7 +398,27 @@ def test_PMHA():
     print("input_tensor.",input_tensor.grad ) 
         
         
+class ParallelMLP(nn.Module):
+    def __init__(self,config:TransformerConfig):
+        super().__init__()
+        self.c_fc=ColumnParallelLinear(config,config.n_embd, config.intermidiate_size,bias=True,gather_output=False)
+        self.c_fc.name="c_fc"
+        self.c_fc.opname="linear"
 
+
+        self.gelu    = nn.GELU(approximate='tanh')
+        self.c_proj  = RowParallelLinear(config,config.intermidiate_size, config.n_embd,bias=True,input_is_parallel=True)
+        self.c_proj.name="c_proj"
+        self.c_proj.opname="linear"
+
+        self.dropout =nn.Dropout(config.hidden_dropout)
+
+    def forward(self,x):
+        x = self.c_fc(x)
+        x = self.gelu(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
 
 
 

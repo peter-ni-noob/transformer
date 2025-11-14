@@ -40,7 +40,32 @@
             "PYTHONPATH":"${workspaceFolder}",
             "GPUS_NUM":"1" //与--nproc_per_node保持一致        
             }
-        },{
+        },
+        {
+            "name": "torchrun调试程序: original TP",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/usr/local/bin/torchrun",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--nproc_per_node", "2",
+                "--nnodes", "1",
+                "--master_addr", "localhost",
+                "--master_port", "6000",
+                "${file}"
+            ],
+            "env": {"CUDA_DEVICE_MAX_CONNECTIONS":"1",
+            "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION":"python",
+            "CUDA_HOME":"/usr/local/cuda",
+            "CUDA_VISIBLE_DEVICES":"2,3,4",
+            "PYTHONPATH":"${workspaceFolder}",
+            "GPUS_NUM":"1" //与--nproc_per_node保持一致        
+            }
+        },
+        
+        
+        {
             "name": "torchrun调试megatron算子",
             "type": "debugpy",
             "request": "launch",

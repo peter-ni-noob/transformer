@@ -8,12 +8,15 @@ class TransformerConfig:
     attention_dropout:float=0.0
     batch_size:int=1
     seq_len:int=1024
-    nlayer:int=3
+    nlayer:int=1
     vocab_size:int=50257
     n_head:int=12
     accumulation_steps:int=1
     log_interval:int=10
     init_method_std:float=0.02
+
+    intermidiate_size:int=3072
+    need_attention_mask:bool=True
 
     group_query_attention:bool=False
     sequence_parallel:bool=False
