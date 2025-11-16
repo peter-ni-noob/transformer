@@ -72,6 +72,7 @@ def main():
     loss_acc=0.0
     t_begin=time.time()
     real_step=0
+    throughputBuffer=[]
 
     for step,(data,label) in enumerate(gptdataloader):
         data=data.to(device)[:, :modelconfig.seq_len].transpose(0,1)
@@ -98,11 +99,13 @@ def main():
                 throughput=globalBatchSize*modelconfig.seq_len*modelconfig.log_interval/time_per_realstep
                 dlogger.info(f"step:{real_step}, loss:{loss_acc:.6f}, lr:{lr:.6e}, time_cost:{t_end - t_begin:.2f}s, throughout:{int(throughput)}",master_only=True)
                 t_begin=time.time()
+                if real_step>=1:
+                    throughputBuffer.append(throughput)
 
             #收尾工作
             loss_acc=0.0
             real_step+=1
-            if(real_step==4000):
+            if(real_step==100):
                 return
 
 
