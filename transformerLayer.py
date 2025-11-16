@@ -297,7 +297,7 @@ class WPParallelTransformerBlock(nn.Module):
        
     def forward(self,x):
 
-        # x=x+self.attention(self.ln_1(x))
+        x=x+self.attention(self.ln_1(x))
         x=x+self.mlp(self.ln_2(x))
         return x
     
