@@ -56,7 +56,7 @@ def main():
     modelconfig=TransformerConfig()
     model=WPParallelTransformer(modelconfig).to(device)
     model.train(True)
-    
+
     # for name,param in model.named_parameters():
     #     print(name)
 
@@ -77,6 +77,7 @@ def main():
     real_step=0
 
     for step,(data,label) in enumerate(gptdataloader):
+        set_global_var("STEP",step)
         data=data.to(device)[:, :modelconfig.seq_len].transpose(0,1)
         label=label.to(device)[:, :modelconfig.seq_len].transpose(0,1)
         l,loss=model(data,label)

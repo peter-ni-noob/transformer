@@ -6,6 +6,8 @@ DEVICE=None
 COMSTREAM=None
 COPYSTREAM=None
 
+STEP=0
+
 
 
 def set_global_var(key, value):
