@@ -791,11 +791,12 @@ class ParallelMLP(nn.Module):
 
 
 class WPParallelMLP(nn.Module):
-    def __init__(self,config:TransformerConfig):
+    def __init__(self,config:TransformerConfig,layer_number:int=-1):
         super().__init__()
         self.c_fc=WPColumnParallelLinear(config,config.n_embd, config.intermidiate_size,bias=True,gather_output=False)
         self.c_fc.name="c_fc"
         self.c_fc.opname="linear"
+        self.config=config
 
 
         self.gelu    = nn.GELU(approximate='tanh')
@@ -805,21 +806,39 @@ class WPParallelMLP(nn.Module):
 
         self.dropout =nn.Dropout(config.hidden_dropout)
         self.rank=gobalVar.TPRANK
+        self.layer_number=layer_number
+
 
     def forward(self,x):
         #异步通信权重
         with torch.no_grad():
-            with torch.cuda.stream(gobalVar.COMSTREAM):
-                buffer=[]
-                comworkers=[]
-                for name,param in self.named_parameters():
-                    if name.find("ln")!=-1:
-                        continue
-                    for i in range(gobalVar.TPWORLD_SIZE):
-                        gpu_tensor=get_global_memory_buffer().try_get_tensor(param.shape,param.dtype,"rank-"+str(i)+"-"+"mlp."+name)
-                        buffer.append(gpu_tensor)
-                    comworkers.append(dist.all_gather(buffer,param,async_op=True))
-                    buffer.clear()
+            if self.config.accumulation_steps == 1:
+                with torch.cuda.stream(gobalVar.COMSTREAM):
+                    buffer=[]
+                    comworkers=[]
+                    for name,param in self.named_parameters():
+                        if name.find("ln")!=-1:
+                            continue
+                        for i in range(gobalVar.TPWORLD_SIZE):
+                            gpu_tensor=get_global_memory_buffer().try_get_tensor(param.shape,param.dtype,"rank-"+str(i)+"-"+"mlp."+name)
+                            buffer.append(gpu_tensor)
+                        comworkers.append(dist.all_gather(buffer,param,async_op=True))
+                        buffer.clear()
+            else:
+                #梯度累加
+                if (gobalVar.STEP+1)%self.config.accumulation_steps==1:
+                    with torch.cuda.stream(gobalVar.COMSTREAM):
+                        buffer=[]
+                        comworkers=[]
+                        for name,param in self.named_parameters():
+                            if name.find("ln")!=-1:
+                                continue
+                            for i in range(gobalVar.TPWORLD_SIZE):
+                                gpu_tensor=get_global_memory_buffer().try_get_tensor(param.shape,param.dtype,"rank-"+str(i)+"-"+"mlp."+name)
+                                buffer.append(gpu_tensor)
+                            comworkers.append(dist.all_gather(buffer,param,async_op=True))
+                            buffer.clear()
+
         #异步拷贝
         with torch.no_grad():
             with torch.cuda.stream(gobalVar.COPYSTREAM):
@@ -831,9 +850,32 @@ class WPParallelMLP(nn.Module):
         x = self.gelu(x)
         x,bias = self.c_proj(x)
         #等待通信完成,一般异步x拷贝完成
-        for i in range(4):
-            comworkers[i].wait()
-
+        if self.config.accumulation_steps == 1:
+            for i in range(4):
+                comworkers[i].wait()
+        else:
+            if (gobalVar.STEP+1)%self.config.accumulation_steps==1:
+                for i in range(4):
+                    comworkers[i].wait()
+                with torch.cuda.stream(gobalVar.COPYSTREAM2):
+                    for name,param in self.named_parameters():
+                        if name.find("ln")!=-1:
+                            continue
+                        for i in range(gobalVar.TPWORLD_SIZE):
+                            gpu_tensor=get_global_memory_buffer().try_get_tensor(param.shape,param.dtype,"rank-"+str(i)+"-"+"mlp."+name)
+                            cpu_tensor=get_global_memory_buffer().try_get_CPUtensor(param.shape,param.dtype,"rank-"+str(self.rank)+"-layer-"+str(self.layer_number)+"-"+"mlp."+name)
+                            cpu_tensor.copy_(gpu_tensor,non_blocking=True)
+            else:
+                gobalVar.COPYSTREAM2.synchronize()
+                with torch.cuda.stream(gobalVar.COPYSTREAM2):
+                    for name,param in self.named_parameters():
+                        if name.find("ln")!=-1:
+                            continue
+                        for i in range(gobalVar.TPWORLD_SIZE):
+                            gpu_tensor=get_global_memory_buffer().try_get_tensor(param.shape,param.dtype,"rank-"+str(i)+"-"+"mlp."+name)
+                            cpu_tensor=get_global_memory_buffer().try_get_CPUtensor(param.shape,param.dtype,"rank-"+str(self.rank)+"-layer-"+str(self.layer_number)+"-"+"mlp."+name)
+                            gpu_tensor.copy_(cpu_tensor,non_blocking=False)
+        gobalVar.COPYSTREAM.synchronize()
         for now in range(gobalVar.TPWORLD_SIZE):
             if now==self.rank:
                 continue
@@ -854,7 +896,7 @@ class WPParallelMLP(nn.Module):
             with torch.cuda.stream(gobalVar.COPYSTREAM):
                 param.data.copy_(gpu_tensor,non_blocking=True)        
         x=x+bias
-        gobalVar.COPYSTREAM.synchronize()
+        # gobalVar.COPYSTREAM.synchronize()
         return x
         
 

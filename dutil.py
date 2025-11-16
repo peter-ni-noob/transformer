@@ -72,6 +72,7 @@ def init_tp_env():
     _set_global_memory_buffer()
     set_global_var("COMSTREAM",torch.cuda.Stream())
     set_global_var("COPYSTREAM",torch.cuda.Stream())
+    set_global_var("COPYSTREAM2",torch.cuda.Stream())
 
 
 
@@ -133,6 +134,7 @@ class GlobalMemoryBuffer:
                     dtype=dtype,
                     device=torch.device('cpu'),
                     requires_grad=False,
+                    pin_memory=True
                 )
 
         return self.cpu_buffer[(name, dtype)][0:required_len].view(*tensor_shape)

@@ -287,7 +287,7 @@ class WPParallelTransformerBlock(nn.Module):
         self.ln_1 = nn.LayerNorm(config.n_embd)
         self.attention=WPPAttention(config,layer_number)
         self.ln_2 = nn.LayerNorm(config.n_embd)
-        self.mlp = WPParallelMLP(config)
+        self.mlp = WPParallelMLP(config,layer_number)
         self.mlp.c_fc.name+="ffw"
         self.mlp.c_proj.name+="ffw"
         self.ln_1.name="ln1"
@@ -297,7 +297,7 @@ class WPParallelTransformerBlock(nn.Module):
        
     def forward(self,x):
 
-        x=x+self.attention(self.ln_1(x))
+        # x=x+self.attention(self.ln_1(x))
         x=x+self.mlp(self.ln_2(x))
         return x
     

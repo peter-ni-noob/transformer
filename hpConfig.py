@@ -6,12 +6,13 @@ class TransformerConfig:
     n_embd:int=768
     hidden_dropout:float=0.0
     attention_dropout:float=0.0
-    batch_size:int=16
+    batch_size:int=4
     seq_len:int=500
     nlayer:int=4
     vocab_size:int=50257
     n_head:int=12
-    accumulation_steps:int=1
+
+    accumulation_steps:int=4
     log_interval:int=10
     init_method_std:float=0.02
 
