@@ -32,6 +32,7 @@ from hpConfig import TransformerConfig, TransformerOptimizerConfig
 from dlogger import DLogger
 from dutil import get_lrank, get_rank
 from dutil import device_init, init_tp_env
+import statistics
 
 
 
@@ -110,6 +111,8 @@ def main():
             loss_acc=0.0
             real_step+=1
             if(real_step==100):
+                ans=statistics.mean(throughputBuffer)
+                dlogger.info(f"avg_throughput: {ans}",master_only=True)
                 return
 
 
