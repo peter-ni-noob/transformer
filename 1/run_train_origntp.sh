@@ -23,4 +23,4 @@ DISTRIBUTED_ARGS=(
 
 # gpt_train_origintp.py
 # gpt_train_WPtp.py
-torchrun ${DISTRIBUTED_ARGS[@]} ./gpt_train_WPtp.py
+torchrun ${DISTRIBUTED_ARGS[@]} ./gpt_train_origintp.py
